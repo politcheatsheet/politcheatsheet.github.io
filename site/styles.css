@@ -64,6 +64,7 @@ button { cursor:pointer; }
 .notice { margin:0 0:1.5rem; border:1px solid #fda4af; border-radius:.75rem; padding:.8rem 1rem; color:#9f1239; background:#fff1f2; line-height:1.5; }
 :root[data-theme="dark"] .notice { color:#fecdd3; background:#3b1726; border-color:#9f1239; }
 .modal { width:min(100% - 2rem, 32rem); border:1px solid var(--card-border); border-radius:1.25rem; padding:0; color:var(--ink); background:var(--surface); box-shadow:0 22px 70px rgb(0 0 0 / .4); }
+.modal[data-detail-dialog] { width:min(80vw, 57.6rem); max-height:calc(100vh - 2rem); overflow-y:auto; }
 .modal::backdrop { background:rgb(25 12 50 / .5); }
 .modal form { position:relative; display:grid; gap:.7rem; padding:1.75rem; }
 .modal h2 { margin:.2rem 2rem .1rem 0; color:var(--heading); font-size:1.7rem; letter-spacing:-.04em; }
