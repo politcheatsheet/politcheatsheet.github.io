@@ -6,7 +6,7 @@ export interface Env {
   ALLOWED_ORIGINS?: string;
 }
 
-type Card = { id: string; title: string; description: string; sortOrder: number };
+type Card = { id: string; title: string; description: string; slug: string; sortOrder: number };
 type Topic = Card & { categoryId: string; author: string };
 type Input = { title: string; description: string };
 type TopicInput = Input & { author: string };
@@ -21,15 +21,19 @@ const deviceUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a
 const dataImagePattern = /!\[image\]\((data:image\/webp;base64,[A-Za-z0-9+/=]+)\)/g;
 const imageSourcePattern = /!\[image\]\((data:image\/webp;base64,[A-Za-z0-9+/=]+|media:\/\/images\/[0-9a-f-]+\.webp)\)/g;
 const mediaKeyPattern = /^(?:images\/[0-9a-f-]+\.webp|documents\/[0-9a-f-]+\.pdf)$/;
+function slugify(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "carte";
+}
+
 const defaultCategories: Card[] = [
-  { id: "economie", title: "Économie", description: "Comprendre les grandes mécaniques qui façonnent nos choix.", sortOrder: 1 },
-  { id: "societe", title: "Société", description: "Idées, institutions et questions qui traversent notre quotidien.", sortOrder: 2 },
-  { id: "technologie", title: "Technologie", description: "Des outils qui changent la façon dont nous vivons et travaillons.", sortOrder: 3 },
+  { id: "economie", title: "Économie", description: "Comprendre les grandes mécaniques qui façonnent nos choix.", slug: "economie", sortOrder: 1 },
+  { id: "societe", title: "Société", description: "Idées, institutions et questions qui traversent notre quotidien.", slug: "societe", sortOrder: 2 },
+  { id: "technologie", title: "Technologie", description: "Des outils qui changent la façon dont nous vivons et travaillons.", slug: "technologie", sortOrder: 3 },
 ];
 const defaultTopics: Topic[] = [
-  { id: "inflation", categoryId: "economie", title: "L’inflation, simplement", description: "Pourquoi les prix montent, comment elle est mesurée, et ce qu’elle change au quotidien.", author: "", sortOrder: 1 },
-  { id: "offre-demande", categoryId: "economie", title: "L’offre et la demande", description: "Le principe qui aide à lire les prix, les pénuries et les comportements de marché.", author: "", sortOrder: 2 },
-  { id: "budget-public", categoryId: "economie", title: "Le budget public", description: "Comment l’État collecte, répartit et utilise l’argent public.", author: "", sortOrder: 3 },
+  { id: "inflation", categoryId: "economie", title: "L’inflation, simplement", description: "Pourquoi les prix montent, comment elle est mesurée, et ce qu’elle change au quotidien.", author: "", slug: "inflation_simplement", sortOrder: 1 },
+  { id: "offre-demande", categoryId: "economie", title: "L’offre et la demande", description: "Le principe qui aide à lire les prix, les pénuries et les comportements de marché.", author: "", slug: "offre_et_la_demande", sortOrder: 2 },
+  { id: "budget-public", categoryId: "economie", title: "Le budget public", description: "Comment l’État collecte, répartit et utilise l’argent public.", author: "", slug: "le_budget_public", sortOrder: 3 },
 ];
 
 function cors(request: Request, env: Env): Record<string, string> {
@@ -74,7 +78,43 @@ function validateTopicInput(value: unknown): TopicInput {
 }
 
 function card(row: Record<string, unknown>): Card {
-  return { id: String(row.id), title: String(row.title), description: String(row.description || ""), sortOrder: Number(row.sort_order || 0) };
+  const title = String(row.title);
+  return { id: String(row.id), title, description: String(row.description || ""), slug: String(row.slug || slugify(title)), sortOrder: Number(row.sort_order || 0) };
+}
+
+async function backfillSlugs(env: Env, table: "categories" | "topics", rows: Record<string, unknown>[], categoryId?: string) {
+  const used = new Set(rows.map((row) => String(row.slug || "")).filter(Boolean));
+  if (table === "categories") {
+    for (const item of defaultCategories) if (!rows.some((row) => String(row.id) === item.id)) used.add(item.slug);
+  } else {
+    for (const item of defaultTopics) if (item.categoryId === categoryId && !rows.some((row) => String(row.id) === item.id)) used.add(item.slug);
+  }
+  for (const row of rows) {
+    if (row.slug) continue;
+    const id = String(row.id);
+    const base = slugify(String(row.title));
+    let slug = base;
+    if (used.has(slug)) slug = `${base}_${id.replace(/[^a-z0-9]/gi, "").slice(-6) || "card"}`;
+    used.add(slug);
+    if (table === "categories") await env.DB.prepare("UPDATE categories SET slug = ? WHERE id = ? AND slug = ''").bind(slug, id).run();
+    else await env.DB.prepare("UPDATE topics SET slug = ? WHERE id = ? AND category_id = ? AND slug = ''").bind(slug, id, categoryId || "").run();
+    row.slug = slug;
+  }
+}
+
+async function availableSlug(env: Env, table: "categories" | "topics", title: string, id: string, categoryId?: string) {
+  const base = slugify(title);
+  const fallback = `${base}_${id.replace(/[^a-z0-9]/gi, "").slice(-6) || "card"}`;
+  const defaultCollision = table === "categories"
+    ? defaultCategories.some((item) => item.id !== id && item.slug === base)
+    : defaultTopics.some((item) => item.categoryId === categoryId && item.id !== id && item.slug === base);
+  const condition = table === "topics" ? "category_id = ? AND slug = ? AND id <> ?" : "slug = ? AND id <> ?";
+  const query = (slug: string) => table === "topics"
+    ? env.DB.prepare(`SELECT id FROM topics WHERE ${condition} LIMIT 1`).bind(categoryId || "", slug, id).first()
+    : env.DB.prepare(`SELECT id FROM categories WHERE ${condition} LIMIT 1`).bind(slug, id).first();
+  if (!defaultCollision && !(await query(base))) return base;
+  if (!(await query(fallback))) return fallback;
+  return `${fallback}_${crypto.randomUUID().slice(0, 6)}`;
 }
 
 function mediaSource(key: string) { return `media://${key}`; }
@@ -188,7 +228,7 @@ async function isEditor(request: Request, env: Env) {
 }
 
 async function storedCategory(env: Env, id: string) {
-  const row = await env.DB.prepare("SELECT id, title, description, sort_order FROM categories WHERE id = ?").bind(id).first<Record<string, unknown>>();
+  const row = await env.DB.prepare("SELECT id, title, description, slug, sort_order FROM categories WHERE id = ?").bind(id).first<Record<string, unknown>>();
   return row ? card(row) : null;
 }
 
@@ -214,32 +254,43 @@ async function ensureCategory(env: Env, id: string) {
 async function writeCategory(env: Env, input: Input & { sortOrder?: number }, id: string = crypto.randomUUID()) {
   const timestamp = new Date().toISOString();
   const fallback = defaultCategories.find((item) => item.id === id);
-  await env.DB.prepare("INSERT INTO categories (id, title, description, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, sort_order = excluded.sort_order, updated_at = excluded.updated_at")
-    .bind(id, input.title, input.description, input.sortOrder ?? fallback?.sortOrder ?? Date.now(), timestamp, timestamp).run();
+  const existing = await env.DB.prepare("SELECT slug FROM categories WHERE id = ?").bind(id).first<{ slug: string }>();
+  const slug = existing?.slug || fallback?.slug || await availableSlug(env, "categories", input.title, id);
+  await env.DB.prepare("INSERT INTO categories (id, title, description, slug, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, sort_order = excluded.sort_order, updated_at = excluded.updated_at")
+    .bind(id, input.title, input.description, slug, input.sortOrder ?? fallback?.sortOrder ?? Date.now(), timestamp, timestamp).run();
   const result = await storedCategory(env, id);
   if (!result) throw new Error("La catégorie n’a pas pu être enregistrée.");
   return result;
 }
 
 async function listCategories(env: Env) {
-  const result = await env.DB.prepare("SELECT id, title, description, sort_order FROM categories ORDER BY sort_order ASC").all<Record<string, unknown>>();
+  const result = await env.DB.prepare("SELECT id, title, description, slug, sort_order FROM categories ORDER BY sort_order ASC").all<Record<string, unknown>>();
+  await backfillSlugs(env, "categories", result.results);
   const stored = await Promise.all(result.results.map(async (row) => card(await migrateStoredDescription(env, "categories", row))));
   return merge(defaultCategories, stored, await deletedIds(env, "category"));
 }
 
 async function listTopics(env: Env, categoryId: string) {
   if (await isDeleted(env, "category", categoryId)) return [];
-  const result = await env.DB.prepare("SELECT id, category_id, title, description, author, sort_order FROM topics WHERE category_id = ? ORDER BY sort_order ASC").bind(categoryId).all<Record<string, unknown>>();
+  const result = await env.DB.prepare("SELECT id, category_id, title, description, slug, author, sort_order FROM topics WHERE category_id = ? ORDER BY sort_order ASC").bind(categoryId).all<Record<string, unknown>>();
+  await backfillSlugs(env, "topics", result.results, categoryId);
   const stored = await Promise.all(result.results.map(async (row) => topic(await migrateStoredDescription(env, "topics", row))));
   return merge(defaultTopics.filter((item) => item.categoryId === categoryId), stored, await deletedIds(env, "topic"));
 }
 
 async function listAllTopics(env: Env) {
   const [result, deletedTopics, deletedCategories] = await Promise.all([
-    env.DB.prepare("SELECT id, category_id, title, description, author, sort_order FROM topics ORDER BY sort_order ASC").all<Record<string, unknown>>(),
+    env.DB.prepare("SELECT id, category_id, title, description, slug, author, sort_order FROM topics ORDER BY sort_order ASC").all<Record<string, unknown>>(),
     deletedIds(env, "topic"),
     deletedIds(env, "category"),
   ]);
+  const topicsByCategory = new Map<string, Record<string, unknown>[]>();
+  for (const row of result.results) {
+    const categoryId = String(row.category_id);
+    const rows = topicsByCategory.get(categoryId) || [];
+    rows.push(row); topicsByCategory.set(categoryId, rows);
+  }
+  for (const [categoryId, rows] of topicsByCategory) await backfillSlugs(env, "topics", rows, categoryId);
   const stored = (await Promise.all(result.results.map(async (row) => topic(await migrateStoredDescription(env, "topics", row))))).filter((item) => !deletedCategories.has(item.categoryId));
   const defaults = defaultTopics.filter((item) => !deletedCategories.has(item.categoryId));
   return merge(defaults, stored, deletedTopics);
@@ -249,9 +300,11 @@ async function writeTopic(env: Env, categoryId: string, input: TopicInput, id: s
   await ensureCategory(env, categoryId);
   const timestamp = new Date().toISOString();
   const fallback = defaultTopics.find((item) => item.id === id);
-  await env.DB.prepare("INSERT INTO topics (id, category_id, title, description, author, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET category_id = excluded.category_id, title = excluded.title, description = excluded.description, author = excluded.author, sort_order = excluded.sort_order, updated_at = excluded.updated_at")
-    .bind(id, categoryId, input.title, input.description, input.author, fallback?.sortOrder ?? Date.now(), timestamp, timestamp).run();
-  const row = await env.DB.prepare("SELECT id, category_id, title, description, author, sort_order FROM topics WHERE id = ?").bind(id).first<Record<string, unknown>>();
+  const existing = await env.DB.prepare("SELECT slug FROM topics WHERE id = ?").bind(id).first<{ slug: string }>();
+  const slug = existing?.slug || fallback?.slug || await availableSlug(env, "topics", input.title, id, categoryId);
+  await env.DB.prepare("INSERT INTO topics (id, category_id, title, description, slug, author, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET category_id = excluded.category_id, title = excluded.title, description = excluded.description, author = excluded.author, sort_order = excluded.sort_order, updated_at = excluded.updated_at")
+    .bind(id, categoryId, input.title, input.description, slug, input.author, fallback?.sortOrder ?? Date.now(), timestamp, timestamp).run();
+  const row = await env.DB.prepare("SELECT id, category_id, title, description, slug, author, sort_order FROM topics WHERE id = ?").bind(id).first<Record<string, unknown>>();
   if (!row) throw new Error("Le sujet n’a pas pu être enregistré.");
   return topic(row);
 }

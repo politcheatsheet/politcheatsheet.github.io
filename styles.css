@@ -39,7 +39,7 @@ button { cursor:pointer; }
 .card-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:1.25rem; }
 .card { display:flex; min-height:17rem; flex-direction:column; overflow:hidden; border:1px solid var(--card-border); border-radius:1.25rem; background:var(--surface); box-shadow:0 14px 32px rgb(76 29 149 / .07); transition:transform .2s,box-shadow .2s; }
 .card:hover { transform:translateY(-4px); box-shadow:0 22px 40px rgb(76 29 149 / .13); }
-.card-main { position:relative; flex:1; width:100%; min-height:13.5rem; border:0; padding:1.6rem; color:var(--ink); text-align:left; background:linear-gradient(135deg,var(--card-first),var(--card-first-end)); }
+.card-main { position:relative; display:block; flex:1; width:100%; min-height:13.5rem; border:0; padding:1.6rem; color:var(--ink); text-align:left; text-decoration:none; background:linear-gradient(135deg,var(--card-first),var(--card-first-end)); }
 .card:nth-child(3n+2) .card-main { background:linear-gradient(135deg,var(--card-second),var(--card-second-end)); }
 .card:nth-child(3n) .card-main { background:linear-gradient(135deg,var(--card-third),var(--card-third-end)); }
 .card-arrow { position:absolute; top:1.35rem; right:1.35rem; display:grid; place-items:center; width:2.25rem; height:2.25rem; border-radius:50%; color:var(--purple); background:var(--arrow-bg); font-size:1.35rem; }

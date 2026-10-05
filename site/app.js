@@ -9,7 +9,7 @@
   const maximumCompressedImageBytes = 250 * 1024;
   const maximumPdfBytes = 10 * 1024 * 1024;
   const deviceUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  const state = { categories: [], topics: [], loading: { categories: true, topics: false }, selected: null, editor: false, username: "", pending: null, editorForm: null, detail: null, search: { query: "", topics: [], loading: false } };
+  const state = { categories: [], topics: [], loading: { categories: true, topics: false }, selected: null, editor: false, username: "", pending: null, editorForm: null, detail: null, routeVersion: 0, search: { query: "", topics: [], loading: false } };
   const $ = (selector) => document.querySelector(selector);
   const categoryGrid = $("[data-category-grid]");
   const topicGrid = $("[data-topic-grid]");
@@ -26,6 +26,13 @@
   const editorFeedback = $("[data-editor-feedback]");
 
   function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;" })[character]); }
+  function slugify(value) { return String(value).normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "carte"; }
+  function cardSlug(card) { return card.slug || slugify(card.title); }
+  function categoryPath(category) { return `/${encodeURIComponent(cardSlug(category))}`; }
+  function topicPath(topic) {
+    const category = state.categories.find((item) => item.id === topic.categoryId);
+    return category ? `${categoryPath(category)}/${encodeURIComponent(cardSlug(topic))}` : "/";
+  }
   function isEmbeddedImage(value) { return /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/.test(value); }
   function isStoredImage(value) { return /^media:\/\/images\/[0-9a-f-]+\.webp$/i.test(value); }
   function isStoredDocument(value) { return /^media:\/\/documents\/[0-9a-f-]+\.pdf$/i.test(value); }
@@ -136,7 +143,8 @@
     const editButton = state.editor ? `<button class="text-button" type="button" data-action="edit-${type}" data-id="${id}">Modifier</button>` : "";
     const removeButton = state.editor ? `<button class="text-button delete-button" type="button" data-action="delete-${type}" data-id="${id}">Supprimer</button>` : "";
     const actions = type === "topic" || state.editor ? `<div class="card-actions">${type === "topic" ? `<button class="text-button" type="button" data-action="open-topic" data-id="${id}">Lire</button>` : ""}${editButton}${removeButton}</div>` : "";
-    return `<article class="card"><button class="card-main" type="button" data-action="${type === "category" ? "open-category" : "open-topic"}" data-id="${id}"><span class="card-arrow">›</span><h2>${escapeHtml(card.title)}</h2>${description}${author}</button>${actions}</article>`;
+    const href = type === "category" ? categoryPath(card) : topicPath(card);
+    return `<article class="card"><a class="card-main" href="${escapeHtml(href)}" data-action="${type === "category" ? "open-category" : "open-topic"}" data-id="${id}"><span class="card-arrow">›</span><h2>${escapeHtml(card.title)}</h2>${description}${author}</a>${actions}</article>`;
   }
   function syncSearchControl() {
     const input = $("[data-search-input]");
@@ -197,23 +205,38 @@
     const cards = type === "category" ? state.categories : [...state.topics, ...state.search.topics];
     return cards.find((card) => card.id === id);
   }
-  function setHome() { state.selected = null; state.topics = []; showNotice(""); renderCurrentView(); }
-  async function loadCategories() {
-    state.loading.categories = true; state.categories = []; renderCurrentView();
+  function setHome(navigate = true, replace = false) {
+    state.routeVersion += 1;
+    if (navigate && window.location.pathname !== "/") history[replace ? "replaceState" : "pushState"]({ appRoute: "home" }, "", "/");
+    if (detailDialog.open) detailDialog.close();
+    state.selected = null; state.topics = []; showNotice(""); renderCurrentView();
+  }
+  async function loadCategories(render = true) {
+    state.loading.categories = true; state.categories = [];
+    if (render) renderCurrentView();
     try { state.categories = (await request("/categories")).categories; showNotice(""); }
     catch (error) { state.categories = []; if (apiBase) showNotice(error.message); }
     finally { state.loading.categories = false; }
-    renderCurrentView();
+    if (render) renderCurrentView();
+    return state.categories;
   }
-  async function openCategory(category) {
+  async function openCategory(category, navigate = false, expectedRouteVersion = null) {
+    if (!category) return setHome(false);
+    const routeVersion = expectedRouteVersion ?? ++state.routeVersion;
+    if (navigate) history.pushState({ appRoute: "category" }, "", categoryPath(category));
+    if (detailDialog.open) detailDialog.close();
     state.selected = category; state.topics = []; state.loading.topics = true;
     $("[data-topic-title]").textContent = category.title;
     $("[data-topic-description]").innerHTML = renderMarkdown(category.description);
     renderCurrentView();
-    try { state.topics = (await request(`/topics?categoryId=${encodeURIComponent(category.id)}`)).topics; showNotice(""); }
-    catch (error) { state.topics = []; if (apiBase) showNotice(error.message); }
-    finally { state.loading.topics = false; }
-    renderCurrentView();
+    try {
+      const data = await request(`/topics?categoryId=${encodeURIComponent(category.id)}`);
+      if (routeVersion !== state.routeVersion) return;
+      state.topics = data.topics; showNotice("");
+    }
+    catch (error) { if (routeVersion !== state.routeVersion) return; state.topics = []; if (apiBase) showNotice(error.message); }
+    finally { if (routeVersion === state.routeVersion) state.loading.topics = false; }
+    if (routeVersion === state.routeVersion) renderCurrentView();
   }
   async function updateSearch(query) {
     state.search.query = query;
@@ -354,11 +377,62 @@
     setEditorFeedback("");
     editorDialog.showModal();
   }
-  function openTopic(topic) {
+  function openTopic(topic, navigate = false) {
+    if (!topic) return;
+    if (navigate) {
+      const path = topicPath(topic);
+      if (path !== "/") history.pushState({ appRoute: "topic", parentPath: window.location.pathname }, "", path);
+    }
     state.detail = topic; $("[data-detail-title]").textContent = topic.title;
     const author = $("[data-detail-author]"); author.hidden = !topic.author; author.textContent = topic.author ? `Par ${topic.author}` : "";
     $("[data-detail-copy]").innerHTML = renderMarkdown(topic.description); detailDialog.showModal();
   }
+  async function routeFromLocation(initial = false) {
+    const routeVersion = ++state.routeVersion;
+    let segments;
+    try { segments = window.location.pathname.split("/").filter(Boolean).map(decodeURIComponent); }
+    catch { segments = []; }
+    if (detailDialog.open) detailDialog.close();
+    if (!segments.length) {
+      state.selected = null; state.topics = []; showNotice(""); renderCurrentView();
+      if (initial) history.replaceState({ appRoute: "home" }, "", "/");
+      return;
+    }
+    const category = state.categories.find((item) => cardSlug(item) === segments[0]);
+    if (!category || segments.length > 2) {
+      history.replaceState({ appRoute: "home" }, "", "/");
+      state.selected = null; state.topics = []; showNotice("Cette page est introuvable."); renderCurrentView();
+      return;
+    }
+    const categoryUrl = categoryPath(category);
+    if (initial && segments.length === 1) history.replaceState({ appRoute: "category" }, "", categoryUrl);
+    await openCategory(category, false, routeVersion);
+    if (routeVersion !== state.routeVersion || segments.length === 1) return;
+    const topic = state.topics.find((item) => cardSlug(item) === segments[1]);
+    if (!topic) {
+      history.replaceState({ appRoute: "category" }, "", categoryUrl);
+      showNotice("Ce sujet est introuvable."); renderCurrentView();
+      return;
+    }
+    const topicUrl = topicPath(topic);
+    if (initial) {
+      history.replaceState({ appRoute: "category" }, "", categoryUrl);
+      history.pushState({ appRoute: "topic", parentPath: categoryUrl }, "", topicUrl);
+    } else if (window.location.pathname !== topicUrl) history.replaceState({ appRoute: "topic", parentPath: categoryUrl }, "", topicUrl);
+    openTopic(topic);
+  }
+  detailDialog.addEventListener("close", () => {
+    const segments = window.location.pathname.split("/").filter(Boolean);
+    if (segments.length !== 2) return;
+    const parentPath = history.state?.appRoute === "topic" ? history.state.parentPath : "";
+    if (parentPath) history.back();
+    else {
+      const category = state.categories.find((item) => cardSlug(item) === segments[0]);
+      const categoryUrl = category ? categoryPath(category) : "/";
+      history.replaceState({ appRoute: category ? "category" : "home" }, "", categoryUrl);
+      void routeFromLocation();
+    }
+  });
   async function unlock(event) {
     event.preventDefault();
     const form = event.currentTarget; const submit = form.querySelector("button[type=submit]"); submit.disabled = true;
@@ -445,6 +519,10 @@
     const target = event.target;
     const element = target instanceof Element ? target : target?.parentElement;
     const button = element?.closest("[data-action]"); if (!button) return;
+    if (button instanceof HTMLAnchorElement) {
+      if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+    }
     const { action, id } = button.dataset;
     if (action === "toggle-theme") return toggleTheme();
     if (action === "toggle-menu") return setUserMenu($("[data-user-menu]").hidden);
@@ -456,8 +534,8 @@
     if (action === "create-category") return requireEditor({ kind: "category", mode: "create" });
     if (action === "create-topic") return requireEditor({ kind: "topic", mode: "create", categoryId: state.selected.id });
     if (action === "upload-pdf") return $("[data-pdf-upload]").click();
-    if (action === "open-category") return openCategory(findCard("category", id));
-    if (action === "open-topic") return openTopic(findCard("topic", id));
+    if (action === "open-category") return openCategory(findCard("category", id), true);
+    if (action === "open-topic") return openTopic(findCard("topic", id), true);
     if (action === "edit-category") return requireEditor({ kind: "category", mode: "edit", card: findCard("category", id) });
     if (action === "edit-topic") { const topic = findCard("topic", id); detailDialog.close(); return requireEditor({ kind: "topic", mode: "edit", card: topic, categoryId: topic.categoryId }); }
     if (action === "delete-category") return deleteCard("category", id);
@@ -467,13 +545,14 @@
   document.addEventListener("click", actionFromElement);
   document.addEventListener("click", (event) => { if (!(event.target instanceof Element) || !event.target.closest("[data-user-menu-wrap]")) setUserMenu(false); });
   document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
+  window.addEventListener("popstate", () => { void routeFromLocation(); });
   $("[data-search-input]").addEventListener("input", (event) => updateSearch(event.currentTarget.value));
   $("[data-access-form]").addEventListener("submit", unlock);
   $("[data-editor-form]").addEventListener("submit", saveCard);
   $("[data-pdf-upload]").addEventListener("change", uploadPdf);
   descriptionEditor.addEventListener("paste", pasteDescription);
   setTheme(localStorage.getItem(themeKey) === "dark" ? "dark" : "light", false);
-  renderEditorState(); loadCategories();
+  renderEditorState(); loadCategories(false).then(() => routeFromLocation(true));
   if (sessionStorage.getItem(tokenKey)) validateCurrentSession();
   else restoreRememberedSession();
 })();
