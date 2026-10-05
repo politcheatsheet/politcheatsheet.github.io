@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Des repères clairs, rangés par catégorie." />
+    <title>PolitCheatSheet</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/styles.css?v=card-routes-20261005" />
+  </head>
+  <body>
+    <header class="topbar">
+      <button class="brand" type="button" data-action="home" aria-label="Retour aux catégories">
+        <span class="brand-mark" aria-hidden="true">⌑</span>
+        <span><strong>PolitCheatSheet</strong></span>
+      </button>
+      <div class="header-actions">
+        <span class="editor-badge" hidden data-connected-user></span>
+        <button class="user-connect" type="button" data-action="open-login" aria-label="Se connecter" title="Se connecter" hidden data-connect-button>
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 12a4.25 4.25 0 1 0 0-8.5 4.25 4.25 0 0 0 0 8.5Zm0 2c-4.55 0-8.25 2.35-8.25 5.25V21h16.5v-1.75C20.25 16.35 16.55 14 12 14Z"/></svg>
+        </button>
+        <div class="user-menu-wrap" data-user-menu-wrap hidden>
+          <button class="menu-toggle" type="button" data-action="toggle-menu" aria-label="Ouvrir le menu" aria-expanded="false" aria-controls="user-menu"><span></span><span></span><span></span></button>
+          <div class="user-menu" id="user-menu" data-user-menu hidden>
+            <button class="user-menu-item disconnect-item" type="button" data-action="disconnect">Se déconnecter</button>
+          </div>
+        </div>
+        <button class="theme-toggle" type="button" data-action="toggle-theme" aria-label="Activer le mode sombre" title="Mode sombre"><span aria-hidden="true" data-theme-icon>☾</span></button>
+      </div>
+    </header>
+
+    <main class="page-shell">
+      <p class="notice" hidden data-notice></p>
+      <div class="search-field">
+        <label class="sr-only" for="topic-search">Rechercher parmi tous les sujets</label>
+        <input id="topic-search" type="search" placeholder="Rechercher parmi tous les sujets" data-search-input />
+        <button class="clear-search" type="button" data-action="clear-search" hidden>Effacer</button>
+      </div>
+      <section hidden data-search-results-view>
+        <div class="search-results-heading">
+          <p class="eyebrow">Recherche</p>
+          <h1>Résultats</h1>
+        </div>
+        <div class="card-grid" data-search-results-grid aria-live="polite"></div>
+        <p class="loading-state" hidden data-search-loading aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span>Chargement des sujets…</p>
+        <p class="empty-state" hidden data-empty-search-results>Aucun sujet ne correspond à votre recherche.</p>
+      </section>
+      <section data-categories-view>
+        <div class="page-heading">
+          <div>
+            <p class="eyebrow">Explorer</p>
+            <h1>Catégories</h1>
+          </div>
+          <button class="primary-button desktop-add" type="button" data-action="create-category" hidden>＋ Ajouter</button>
+        </div>
+        <div class="card-grid" data-category-grid aria-live="polite"></div>
+        <p class="loading-state" data-categories-loading aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span>Chargement des catégories…</p>
+        <p class="empty-state" hidden data-empty-categories>Aucune catégorie pour le moment.</p>
+        <button class="primary-button mobile-add" type="button" data-action="create-category" hidden>＋ Ajouter une catégorie</button>
+      </section>
+
+      <section hidden data-topics-view>
+        <div class="page-heading topic-heading">
+          <div>
+            <button class="back-link" type="button" data-action="home">← Toutes les catégories</button>
+            <p class="eyebrow">Catégorie</p>
+            <h1 data-topic-title></h1>
+            <div class="intro" data-topic-description></div>
+          </div>
+          <button class="primary-button" type="button" data-action="create-topic" hidden>＋ Ajouter</button>
+        </div>
+        <div class="card-grid" data-topic-grid aria-live="polite"></div>
+        <p class="loading-state" hidden data-topics-loading aria-live="polite"><span class="loading-spinner" aria-hidden="true"></span>Chargement des sujets…</p>
+        <p class="empty-state" hidden data-empty-topics>Aucun sujet ici pour le moment. Utilisez <strong>Ajouter</strong> pour en créer un.</p>
+      </section>
+    </main>
+
+    <dialog class="modal" data-access-dialog aria-labelledby="access-title">
+      <form method="dialog" data-access-form>
+        <button class="modal-close" type="button" data-close aria-label="Fermer">×</button>
+        <span class="lock" aria-hidden="true">⌁</span>
+        <h2 id="access-title">Accès édition</h2>
+        <p>Saisissez votre nom d’utilisateur et le code pour ajouter ou modifier une carte. Votre nom sera retenu sur ce navigateur.</p>
+        <label for="editor-username">Nom d’utilisateur</label>
+        <input id="editor-username" name="username" maxlength="120" autocomplete="username" required />
+        <label for="access-code">Code d’accès</label>
+        <input id="access-code" name="access-code" type="password" autocomplete="current-password" required />
+        <button class="primary-button" type="submit">Continuer</button>
+      </form>
+    </dialog>
+
+    <dialog class="modal" data-editor-dialog aria-labelledby="editor-title">
+      <form method="dialog" data-editor-form>
+        <button class="modal-close" type="button" data-close aria-label="Fermer">×</button>
+        <h2 id="editor-title" data-editor-title>Nouvelle carte</h2>
+        <p>Un titre clair et quelques lignes suffisent.</p>
+        <label for="card-title">Titre</label>
+        <input id="card-title" name="title" maxlength="120" required />
+        <div data-author-field hidden>
+          <label for="card-author">Auteur <span aria-hidden="true">(facultatif)</span></label>
+          <input id="card-author" name="author" maxlength="120" autocomplete="name" />
+        </div>
+        <label for="card-description">Description</label>
+        <div id="card-description" class="description-editor" contenteditable="true" role="textbox" aria-multiline="true" aria-describedby="description-help" data-description-editor></div>
+        <p id="description-help" class="editor-help">Markdown accepté : <strong>**gras**</strong>, <em>*italique*</em>, <code>`code`</code>, [lien](https://…), titres (#), listes (-) et citations (&gt;). Collez une image : elle est compressée automatiquement. Cliquez une image pour l’agrandir.</p>
+        <input type="file" accept="application/pdf,.pdf" hidden data-pdf-upload />
+        <p class="editor-feedback" aria-live="polite" data-editor-feedback></p>
+        <div class="dialog-actions"><button class="secondary-button" type="button" data-action="upload-pdf">Ajouter un PDF</button><button class="secondary-button" type="button" data-close>Annuler</button><button class="primary-button" type="submit">Enregistrer</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="modal" data-detail-dialog aria-labelledby="detail-title">
+      <form method="dialog">
+        <button class="modal-close" type="button" data-close aria-label="Fermer">×</button>
+        <h2 id="detail-title" data-detail-title></h2>
+        <p class="detail-author" hidden data-detail-author></p>
+        <div class="detail-copy" data-detail-copy></div>
+        <div class="dialog-actions"><button class="secondary-button" type="button" data-close>Fermer</button><button class="primary-button" type="button" data-action="edit-detail" hidden>Modifier</button></div>
+      </form>
+    </dialog>
+
+    <dialog class="image-modal" data-image-dialog aria-label="Image agrandie">
+      <button class="modal-close" type="button" data-close aria-label="Fermer">×</button>
+      <img data-expanded-image alt="Image agrandie" />
+    </dialog>
+
+    <script src="/config.js"></script>
+    <script src="/app.js?v=card-routes-20261005"></script>
+  </body>
+</html>
