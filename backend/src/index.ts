@@ -13,7 +13,7 @@ type TopicInput = Input & { author: string };
 
 const encoder = new TextEncoder();
 const maximumDescriptionLength = 750_000;
-const maximumEmbeddedImages = 2;
+const maximumEmbeddedImages = 10;
 const maximumEmbeddedImageLength = 350_000;
 const maximumPdfBytes = 10 * 1024 * 1024;
 const rememberedDeviceLifetime = 1000 * 60 * 60 * 24 * 30;
@@ -65,7 +65,7 @@ function validateInput(value: unknown): Input {
   if (title.length > 120 || description.length > maximumDescriptionLength) throw new Error("Le titre ou la description est trop long.");
   const images = [...description.matchAll(imageSourcePattern)];
   if (images.length > maximumEmbeddedImages || images.some((image) => image[1].startsWith("data:") && image[1].length > maximumEmbeddedImageLength)) {
-    throw new Error("Une description peut contenir au plus deux images WebP compressées.");
+    throw new Error("Une description peut contenir au plus dix images WebP compressées.");
   }
   return { title, description };
 }

@@ -5,7 +5,7 @@
   const themeKey = "policheatsheat-theme";
   const authorKey = "politcheatsheet-author";
   const usernameKey = "politcheatsheet-username";
-  const maximumEmbeddedImages = 2;
+  const maximumEmbeddedImages = 10;
   const maximumCompressedImageBytes = 250 * 1024;
   const maximumPdfBytes = 10 * 1024 * 1024;
   const deviceUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -335,7 +335,7 @@
     const clipboard = event.clipboardData; const imageItem = [...(clipboard?.items || [])].find((item) => item.kind === "file" && item.type.startsWith("image/"));
     event.preventDefault();
     if (!imageItem) return insertEditorNode(document.createTextNode(clipboard?.getData("text/plain") || ""));
-    if (descriptionEditor.querySelectorAll("img").length >= maximumEmbeddedImages) return setEditorFeedback("Deux images maximum par description.");
+    if (descriptionEditor.querySelectorAll("img").length >= maximumEmbeddedImages) return setEditorFeedback("Dix images maximum par description.");
     const file = imageItem.getAsFile(); if (!file) return setEditorFeedback("Cette image ne peut pas être utilisée.");
     setEditorFeedback("Compression de l’image…");
     try {
