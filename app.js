@@ -474,6 +474,7 @@
   }
   function openEditor(action) {
     state.editorForm = action;
+    editorDialog.dataset.editorKind = action.kind;
     const form = $("[data-editor-form]");
     $("[data-editor-title]").textContent = action.mode === "edit" ? "Modifier la carte" : "Nouvelle carte";
     form.title.value = action.card?.title || "";
