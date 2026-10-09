@@ -8,6 +8,7 @@ export interface Env {
 
 type Card = { id: string; title: string; description: string; slug: string; sortOrder: number };
 type Topic = Card & { categoryId: string; author: string };
+type Notification = { id: string; kind: "category" | "topic"; title: string; slug: string; categoryId?: string; categoryTitle?: string; createdAt: string };
 type Input = { title: string; description: string };
 type TopicInput = Input & { author: string };
 
@@ -223,10 +224,6 @@ async function authenticatedUsername(request: Request, env: Env) {
   return username && username.length <= 120 ? username : null;
 }
 
-async function isEditor(request: Request, env: Env) {
-  return Boolean(await authenticatedUsername(request, env));
-}
-
 async function storedCategory(env: Env, id: string) {
   const row = await env.DB.prepare("SELECT id, title, description, slug, sort_order FROM categories WHERE id = ?").bind(id).first<Record<string, unknown>>();
   return row ? card(row) : null;
@@ -251,13 +248,13 @@ async function ensureCategory(env: Env, id: string) {
   return writeCategory(env, fallback, id);
 }
 
-async function writeCategory(env: Env, input: Input & { sortOrder?: number }, id: string = crypto.randomUUID()) {
+async function writeCategory(env: Env, input: Input & { sortOrder?: number }, id: string = crypto.randomUUID(), createdBy = "") {
   const timestamp = new Date().toISOString();
   const fallback = defaultCategories.find((item) => item.id === id);
   const existing = await env.DB.prepare("SELECT slug FROM categories WHERE id = ?").bind(id).first<{ slug: string }>();
   const slug = existing?.slug || fallback?.slug || await availableSlug(env, "categories", input.title, id);
-  await env.DB.prepare("INSERT INTO categories (id, title, description, slug, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, sort_order = excluded.sort_order, updated_at = excluded.updated_at")
-    .bind(id, input.title, input.description, slug, input.sortOrder ?? fallback?.sortOrder ?? Date.now(), timestamp, timestamp).run();
+  await env.DB.prepare("INSERT INTO categories (id, title, description, slug, sort_order, created_at, updated_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET title = excluded.title, description = excluded.description, sort_order = excluded.sort_order, updated_at = excluded.updated_at")
+    .bind(id, input.title, input.description, slug, input.sortOrder ?? fallback?.sortOrder ?? Date.now(), timestamp, timestamp, createdBy).run();
   const result = await storedCategory(env, id);
   if (!result) throw new Error("La catégorie n’a pas pu être enregistrée.");
   return result;
@@ -296,14 +293,31 @@ async function listAllTopics(env: Env) {
   return merge(defaults, stored, deletedTopics);
 }
 
-async function writeTopic(env: Env, categoryId: string, input: TopicInput, id: string = crypto.randomUUID()) {
+async function listNotifications(env: Env, username: string, after: string): Promise<Notification[]> {
+  const [categories, topics, deletedCategories, deletedTopics] = await Promise.all([
+    env.DB.prepare("SELECT id, title, slug, created_at, created_by FROM categories WHERE created_at > ? ORDER BY created_at DESC LIMIT 100").bind(after).all<Record<string, unknown>>(),
+    env.DB.prepare("SELECT topics.id, topics.category_id, topics.title, topics.slug, topics.created_at, topics.created_by, categories.title AS category_title FROM topics INNER JOIN categories ON categories.id = topics.category_id WHERE topics.created_at > ? ORDER BY topics.created_at DESC LIMIT 100").bind(after).all<Record<string, unknown>>(),
+    deletedIds(env, "category"),
+    deletedIds(env, "topic"),
+  ]);
+  const currentUser = username.trim().toLocaleLowerCase();
+  const categoryItems: Notification[] = categories.results
+    .filter((row) => String(row.created_by || "").trim().toLocaleLowerCase() !== currentUser && !deletedCategories.has(String(row.id)))
+    .map((row) => ({ id: String(row.id), kind: "category", title: String(row.title), slug: String(row.slug || slugify(String(row.title))), createdAt: String(row.created_at) }));
+  const topicItems: Notification[] = topics.results
+    .filter((row) => String(row.created_by || "").trim().toLocaleLowerCase() !== currentUser && !deletedTopics.has(String(row.id)) && !deletedCategories.has(String(row.category_id)))
+    .map((row) => ({ id: String(row.id), kind: "topic", categoryId: String(row.category_id), categoryTitle: String(row.category_title), title: String(row.title), slug: String(row.slug || slugify(String(row.title))), createdAt: String(row.created_at) }));
+  return [...categoryItems, ...topicItems].sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, 100);
+}
+
+async function writeTopic(env: Env, categoryId: string, input: TopicInput, id: string = crypto.randomUUID(), createdBy = "") {
   await ensureCategory(env, categoryId);
   const timestamp = new Date().toISOString();
   const fallback = defaultTopics.find((item) => item.id === id);
   const existing = await env.DB.prepare("SELECT slug FROM topics WHERE id = ?").bind(id).first<{ slug: string }>();
   const slug = existing?.slug || fallback?.slug || await availableSlug(env, "topics", input.title, id, categoryId);
-  await env.DB.prepare("INSERT INTO topics (id, category_id, title, description, slug, author, sort_order, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET category_id = excluded.category_id, title = excluded.title, description = excluded.description, author = excluded.author, sort_order = excluded.sort_order, updated_at = excluded.updated_at")
-    .bind(id, categoryId, input.title, input.description, slug, input.author, fallback?.sortOrder ?? Date.now(), timestamp, timestamp).run();
+  await env.DB.prepare("INSERT INTO topics (id, category_id, title, description, slug, author, sort_order, created_at, updated_at, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET category_id = excluded.category_id, title = excluded.title, description = excluded.description, author = excluded.author, sort_order = excluded.sort_order, updated_at = excluded.updated_at")
+    .bind(id, categoryId, input.title, input.description, slug, input.author, fallback?.sortOrder ?? Date.now(), timestamp, timestamp, createdBy).run();
   const row = await env.DB.prepare("SELECT id, category_id, title, description, slug, author, sort_order FROM topics WHERE id = ?").bind(id).first<Record<string, unknown>>();
   if (!row) throw new Error("Le sujet n’a pas pu être enregistré.");
   return topic(row);
@@ -369,7 +383,8 @@ async function content(request: Request, env: Env, path: string) {
     const categoryId = new URL(request.url).searchParams.get("categoryId");
     return json(request, env, { topics: categoryId ? await listTopics(env, categoryId) : await listAllTopics(env) });
   }
-  if (!(await isEditor(request, env))) return failure(request, env, "Accès éditeur requis.", 403);
+  const editorUsername = await authenticatedUsername(request, env);
+  if (!editorUsername) return failure(request, env, "Accès éditeur requis.", 403);
   if (request.method === "DELETE" && path.startsWith("/categories/")) {
     await deleteCategory(env, decodeURIComponent(path.slice(12)));
     return json(request, env, { ok: true });
@@ -386,12 +401,12 @@ async function content(request: Request, env: Env, path: string) {
   if (request.method !== "POST" && request.method !== "PUT") return failure(request, env, "Route introuvable.", 404);
   const body = await request.json();
   const input = validateInput(body);
-  if (request.method === "POST" && path === "/categories") return json(request, env, { category: await writeCategory(env, input) }, 201);
+  if (request.method === "POST" && path === "/categories") return json(request, env, { category: await writeCategory(env, input, undefined, editorUsername) }, 201);
   if (request.method === "PUT" && path.startsWith("/categories/")) return json(request, env, { category: await writeCategory(env, input, decodeURIComponent(path.slice(12))) });
   const categoryId = typeof (body as Record<string, unknown>).categoryId === "string" ? (body as Record<string, string>).categoryId : "";
   if (!categoryId) return failure(request, env, "Catégorie requise.");
   const topicInput = validateTopicInput(body);
-  if (request.method === "POST" && path === "/topics") return json(request, env, { topic: await writeTopic(env, categoryId, topicInput) }, 201);
+  if (request.method === "POST" && path === "/topics") return json(request, env, { topic: await writeTopic(env, categoryId, topicInput, undefined, editorUsername) }, 201);
   if (request.method === "PUT" && path.startsWith("/topics/")) return json(request, env, { topic: await writeTopic(env, categoryId, topicInput, decodeURIComponent(path.slice(8))) });
   return failure(request, env, "Route introuvable.", 404);
 }
@@ -402,6 +417,13 @@ export default {
     const path = new URL(request.url).pathname;
     try {
       if (request.method === "GET" && path.startsWith("/media/")) return await serveMedia(request, env, path);
+      if (request.method === "GET" && path === "/notifications") {
+        const username = await authenticatedUsername(request, env);
+        if (!username) return failure(request, env, "Accès éditeur requis.", 403);
+        const after = new URL(request.url).searchParams.get("after") || "";
+        if (!Number.isFinite(Date.parse(after))) return failure(request, env, "Date de notification invalide.");
+        return json(request, env, { notifications: await listNotifications(env, username, new Date(after).toISOString()) });
+      }
       if (request.method === "GET" && path === "/session/current") {
         const username = await authenticatedUsername(request, env);
         return username ? json(request, env, { username }) : failure(request, env, "Accès éditeur requis.", 403);

@@ -5,11 +5,13 @@
   const themeKey = "policheatsheat-theme";
   const authorKey = "politcheatsheet-author";
   const usernameKey = "politcheatsheet-username";
+  const notificationSeenPrefix = "politcheatsheet-notification-visit:";
+  const notificationReadPrefix = "politcheatsheet-notification-read:";
   const maximumEmbeddedImages = 10;
   const maximumCompressedImageBytes = 250 * 1024;
   const maximumPdfBytes = 10 * 1024 * 1024;
   const deviceUuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-  const state = { categories: [], topics: [], loading: { categories: true, topics: false }, selected: null, editor: false, username: "", pending: null, editorForm: null, detail: null, routeVersion: 0, search: { query: "", topics: [], loading: false } };
+  const state = { categories: [], topics: [], loading: { categories: true, topics: false }, selected: null, editor: false, username: "", pending: null, editorForm: null, detail: null, routeVersion: 0, search: { query: "", topics: [], loading: false }, notifications: [], notificationUser: "", notificationCursor: "", notificationVisitAt: "", notificationTimer: null, readNotificationIds: new Set() };
   const $ = (selector) => document.querySelector(selector);
   const categoryGrid = $("[data-category-grid]");
   const topicGrid = $("[data-topic-grid]");
@@ -190,6 +192,106 @@
     if (state.selected) return renderTopics();
     renderCategories();
   }
+  function notificationStorageKey(prefix, username) { return `${prefix}${encodeURIComponent(username.trim().toLocaleLowerCase())}`; }
+  function notificationId(item) { return `${item.kind}:${item.id}`; }
+  function renderNotifications() {
+    const connected = state.editor && Boolean(state.username) && state.notificationUser === state.username;
+    const wrap = $(`[data-notifications-wrap]`);
+    const button = $(`[data-action=toggle-notifications]`);
+    const menu = $(`[data-notifications-menu]`);
+    const items = $(`[data-notification-items]`);
+    const count = $(`[data-notification-count]`);
+    wrap.hidden = !connected;
+    button.disabled = !connected || state.notifications.length === 0;
+    if (!connected || state.notifications.length === 0) menu.hidden = true;
+    button.setAttribute("aria-expanded", String(!menu.hidden));
+    button.setAttribute("aria-label", state.notifications.length ? `Notifications : ${state.notifications.length} nouvelle${state.notifications.length > 1 ? "s" : ""} carte${state.notifications.length > 1 ? "s" : ""}` : "Aucune nouvelle notification");
+    button.title = state.notifications.length ? `${state.notifications.length} nouvelle${state.notifications.length > 1 ? "s" : ""} carte${state.notifications.length > 1 ? "s" : ""}` : "Aucune nouvelle notification";
+    count.textContent = state.notifications.length > 99 ? "99+" : String(state.notifications.length);
+    count.hidden = state.notifications.length === 0;
+    items.innerHTML = state.notifications.map((item) => `<li><button class="notification-item" type="button" data-action="open-notification" data-kind="${escapeHtml(item.kind)}" data-id="${escapeHtml(item.id)}" data-category-id="${escapeHtml(item.categoryId || "")}"><span class="notification-type">${item.kind === "category" ? "Nouvelle catégorie" : "Nouveau sujet"}</span><strong>${escapeHtml(item.title)}</strong>${item.categoryTitle ? `<span class="notification-category">${escapeHtml(item.categoryTitle)}</span>` : ""}</button></li>`).join("");
+  }
+  function addNotifications(items, username) {
+    if (state.notificationUser !== username) return;
+    const notifications = new Map(state.notifications.map((item) => [notificationId(item), item]));
+    items.forEach((item) => { if (!state.readNotificationIds.has(notificationId(item))) notifications.set(notificationId(item), item); });
+    state.notifications = [...notifications.values()].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    renderNotifications();
+  }
+  async function pollNotifications(username) {
+    if (!state.editor || state.notificationUser !== username || !state.notificationCursor) return;
+    try {
+      const data = await request(`/notifications?after=${encodeURIComponent(state.notificationCursor)}`);
+      if (state.notificationUser !== username) return;
+      addNotifications(data.notifications || [], username);
+      if (state.notificationCursor !== state.notificationVisitAt) {
+        state.notificationCursor = state.notificationVisitAt;
+        localStorage.setItem(notificationStorageKey(notificationSeenPrefix, username), state.notificationVisitAt);
+      }
+    } catch { /* Keep the previous cursor so the next poll can retry. */ }
+  }
+  async function startNotificationSession(username) {
+    if (state.notificationTimer) window.clearInterval(state.notificationTimer);
+    state.notificationUser = username;
+    state.notifications = [];
+    state.readNotificationIds = new Set();
+    const seenKey = notificationStorageKey(notificationSeenPrefix, username);
+    const readKey = notificationStorageKey(notificationReadPrefix, username);
+    const previousVisit = localStorage.getItem(seenKey);
+    const visitAt = new Date().toISOString();
+    state.notificationVisitAt = visitAt;
+    state.notificationCursor = previousVisit && Number.isFinite(Date.parse(previousVisit)) ? new Date(previousVisit).toISOString() : visitAt;
+    if (!previousVisit || !Number.isFinite(Date.parse(previousVisit))) localStorage.setItem(seenKey, visitAt);
+    try {
+      const savedReadIds = JSON.parse(localStorage.getItem(readKey) || "[]");
+      if (Array.isArray(savedReadIds)) state.readNotificationIds = new Set(savedReadIds.filter((item) => typeof item === "string"));
+    } catch { localStorage.removeItem(readKey); }
+    renderNotifications();
+    try {
+      const data = await request(`/notifications?after=${encodeURIComponent(state.notificationCursor)}`);
+      if (state.notificationUser !== username) return;
+      addNotifications(data.notifications || [], username);
+      state.notificationCursor = visitAt;
+      localStorage.setItem(seenKey, visitAt);
+    } catch { /* Keep the prior visit cursor so a later poll can retry. */ }
+    if (state.notificationUser === username) {
+      state.notificationTimer = window.setInterval(() => { void pollNotifications(username); }, 60_000);
+    }
+  }
+  function stopNotificationSession() {
+    if (state.notificationTimer) window.clearInterval(state.notificationTimer);
+    state.notificationTimer = null;
+    state.notificationUser = "";
+    state.notificationCursor = "";
+    state.notificationVisitAt = "";
+    state.notifications = [];
+    state.readNotificationIds = new Set();
+  }
+  function markNotificationRead(item) {
+    const id = notificationId(item);
+    state.readNotificationIds.add(id);
+    localStorage.setItem(notificationStorageKey(notificationReadPrefix, state.username), JSON.stringify([...state.readNotificationIds].slice(-500)));
+    state.notifications = state.notifications.filter((notification) => notificationId(notification) !== id);
+    $(`[data-notifications-menu]`).hidden = true;
+    renderNotifications();
+  }
+  async function openNotification(kind, id, categoryId) {
+    const notification = state.notifications.find((item) => item.kind === kind && item.id === id);
+    if (!notification) return;
+    markNotificationRead(notification);
+    state.search.query = "";
+    syncSearchControl();
+    await loadCategories(false);
+    const parentId = kind === "category" ? id : categoryId || notification.categoryId;
+    const category = state.categories.find((item) => item.id === parentId);
+    if (!category) { showNotice("Cette carte n’est plus disponible."); return; }
+    await openCategory(category, true);
+    if (kind === "topic") {
+      const topic = state.topics.find((item) => item.id === id);
+      if (topic) openTopic(topic, true);
+      else showNotice("Ce sujet n’est plus disponible.");
+    }
+  }
   function renderEditorState() {
     const connected = state.editor && Boolean(state.username);
     const username = $("[data-connected-user]");
@@ -199,6 +301,9 @@
     $("[data-user-menu-wrap]").hidden = !connected;
     document.querySelectorAll("[data-action=create-category], [data-action=create-topic]").forEach((button) => { button.hidden = !connected; });
     $("[data-action=edit-detail]").hidden = !connected;
+    if (connected && state.notificationUser !== state.username) void startNotificationSession(state.username);
+    else if (!connected && state.notificationUser) stopNotificationSession();
+    renderNotifications();
     renderCurrentView();
   }
   function findCard(type, id) {
@@ -271,6 +376,7 @@
     button.setAttribute("aria-expanded", String(open));
     button.setAttribute("aria-label", open ? "Fermer le menu" : "Ouvrir le menu");
     $("[data-user-menu]").hidden = !open;
+    if (open) { $("[data-notifications-menu]").hidden = true; $("[data-action=toggle-notifications]").setAttribute("aria-expanded", "false"); }
   }
   function disconnect(showMessage = true) {
     const deviceId = localStorage.getItem(deviceIdKey);
@@ -526,6 +632,14 @@
     const { action, id } = button.dataset;
     if (action === "toggle-theme") return toggleTheme();
     if (action === "toggle-menu") return setUserMenu($("[data-user-menu]").hidden);
+    if (action === "toggle-notifications") {
+      if (button.disabled) return;
+      const menu = $("[data-notifications-menu]"); menu.hidden = !menu.hidden;
+      button.setAttribute("aria-expanded", String(!menu.hidden));
+      if (!menu.hidden) setUserMenu(false);
+      return;
+    }
+    if (action === "open-notification") return void openNotification(button.dataset.kind, id, button.dataset.categoryId);
     if (action === "open-login") { state.pending = null; return openLogin(); }
     if (action === "disconnect") return disconnect();
     if (action === "expand-image") return openExpandedImage(button.dataset.imageSource || "");
@@ -543,7 +657,14 @@
     if (action === "edit-detail") { detailDialog.close(); return requireEditor({ kind: "topic", mode: "edit", card: state.detail, categoryId: state.detail.categoryId }); }
   }
   document.addEventListener("click", actionFromElement);
-  document.addEventListener("click", (event) => { if (!(event.target instanceof Element) || !event.target.closest("[data-user-menu-wrap]")) setUserMenu(false); });
+  document.addEventListener("click", (event) => {
+    const element = event.target instanceof Element ? event.target : null;
+    if (!element?.closest("[data-user-menu-wrap]")) setUserMenu(false);
+    if (!element?.closest("[data-notifications-wrap]")) {
+      $("[data-notifications-menu]").hidden = true;
+      $("[data-action=toggle-notifications]").setAttribute("aria-expanded", "false");
+    }
+  });
   document.querySelectorAll("[data-close]").forEach((button) => button.addEventListener("click", () => button.closest("dialog").close()));
   window.addEventListener("popstate", () => { void routeFromLocation(); });
   $("[data-search-input]").addEventListener("input", (event) => updateSearch(event.currentTarget.value));

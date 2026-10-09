@@ -6,7 +6,7 @@
     <meta name="description" content="Des repères clairs, rangés par catégorie." />
     <title>PolitCheatSheet</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="stylesheet" href="/styles.css?v=card-routes-20261005" />
+    <link rel="stylesheet" href="/styles.css?v=notifications-20261009" />
   </head>
   <body>
     <header class="topbar">
@@ -23,6 +23,16 @@
           <button class="menu-toggle" type="button" data-action="toggle-menu" aria-label="Ouvrir le menu" aria-expanded="false" aria-controls="user-menu"><span></span><span></span><span></span></button>
           <div class="user-menu" id="user-menu" data-user-menu hidden>
             <button class="user-menu-item disconnect-item" type="button" data-action="disconnect">Se déconnecter</button>
+          </div>
+        </div>
+        <div class="notifications-wrap" data-notifications-wrap hidden>
+          <button class="notification-toggle" type="button" data-action="toggle-notifications" aria-label="Aucune nouvelle notification" title="Aucune nouvelle notification" aria-expanded="false" aria-controls="notification-menu" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9Zm-8 12a2.2 2.2 0 0 0 4 0h-4Z"/></svg>
+            <span class="notification-count" data-notification-count hidden></span>
+          </button>
+          <div class="notification-menu" id="notification-menu" data-notifications-menu hidden>
+            <p class="notification-menu-title">Nouvelles cartes</p>
+            <ul data-notification-items></ul>
           </div>
         </div>
         <button class="theme-toggle" type="button" data-action="toggle-theme" aria-label="Activer le mode sombre" title="Mode sombre"><span aria-hidden="true" data-theme-icon>☾</span></button>
@@ -125,6 +135,6 @@
     </dialog>
 
     <script src="/config.js"></script>
-    <script src="/app.js?v=card-routes-20261005"></script>
+    <script src="/app.js?v=notifications-20261009"></script>
   </body>
 </html>
